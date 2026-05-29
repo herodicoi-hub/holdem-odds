@@ -1,0 +1,8 @@
+{
+  "appId": "com.herodicoi.holdemodds",
+  "appName": "Hold'em Odds",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

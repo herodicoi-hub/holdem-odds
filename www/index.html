@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c3b2a" />
+  <title>Hold'em Odds</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <style>
+    html, body, #root { margin: 0; padding: 0; min-height: 100%; background: #07271c; }
+    body { -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useMemo, useCallback } = React;
+
+    // ----- card model -----
+    const RANKS = [14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2];
+    const RANK_LABEL = { 14: "A", 13: "K", 12: "Q", 11: "J", 10: "10", 9: "9", 8: "8", 7: "7", 6: "6", 5: "5", 4: "4", 3: "3", 2: "2" };
+    const SUITS = [
+      { id: 0, glyph: "♠", name: "s", red: false },
+      { id: 1, glyph: "♥", name: "h", red: true },
+      { id: 2, glyph: "♦", name: "d", red: true },
+      { id: 3, glyph: "♣", name: "c", red: false },
+    ];
+    const CAT_NAMES = ["High card", "Pair", "Two pair", "Three of a kind", "Straight", "Flush", "Full house", "Four of a kind", "Straight flush"];
+
+    const key = (r, s) => r * 4 + s;
+    const fromKey = (k) => ({ rank: Math.floor(k / 4), suit: k % 4 });
+
+    const COMBOS = (() => {
+      const out = [];
+      for (let a = 0; a < 7; a++) for (let b = a + 1; b < 7; b++) {
+        const c = [];
+        for (let i = 0; i < 7; i++) if (i !== a && i !== b) c.push(i);
+        out.push(c);
+      }
+      return out;
+    })();
+
+    function evaluate5(cards) {
+      const ranks = cards.map((c) => c.rank).sort((a, b) => b - a);
+      const suits = cards.map((c) => c.suit);
+      const isFlush = suits.every((s) => s === suits[0]);
+      const uniq = [...new Set(ranks)];
+      let isStraight = false, sHigh = 0;
+      if (uniq.length === 5) {
+        if (uniq[0] - uniq[4] === 4) { isStraight = true; sHigh = uniq[0]; }
+        else if (uniq[0] === 14 && uniq[1] === 5 && uniq[4] === 2) { isStraight = true; sHigh = 5; }
+      }
+      const counts = {};
+      ranks.forEach((r) => (counts[r] = (counts[r] || 0) + 1));
+      const entries = Object.entries(counts).map(([r, c]) => [+r, c]).sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+      const pat = entries.map((e) => e[1]);
+      const byR = entries.map((e) => e[0]);
+      if (isStraight && isFlush) return [8, sHigh];
+      if (pat[0] === 4) return [7, byR[0], byR[1]];
+      if (pat[0] === 3 && pat[1] === 2) return [6, byR[0], byR[1]];
+      if (isFlush) return [5, ...ranks];
+      if (isStraight) return [4, sHigh];
+      if (pat[0] === 3) return [3, byR[0], byR[1], byR[2]];
+      if (pat[0] === 2 && pat[1] === 2) return [2, byR[0], byR[1], byR[2]];
+      if (pat[0] === 2) return [1, byR[0], byR[1], byR[2], byR[3]];
+      return [0, ...ranks];
+    }
+    function cmp(a, b) {
+      const n = Math.max(a.length, b.length);
+      for (let i = 0; i < n; i++) { const x = a[i] || 0, y = b[i] || 0; if (x !== y) return x - y; }
+      return 0;
+    }
+    function evaluate7(cards7) {
+      let best = null;
+      for (const combo of COMBOS) {
+        const five = combo.map((i) => cards7[i]);
+        const sc = evaluate5(five);
+        if (!best || cmp(sc, best) > 0) best = sc;
+      }
+      return best;
+    }
+
+    function CardFace({ k, small }) {
+      if (k == null) return null;
+      const { rank, suit } = fromKey(k);
+      const s = SUITS[suit];
+      return (
+        <div style={{
+          fontFamily: "'DM Mono', monospace", lineHeight: 1,
+          color: s.red ? "#c0392b" : "#1a1a1a", textAlign: "center",
+        }}>
+          <div style={{ fontSize: small ? 18 : 26, fontWeight: 500 }}>{RANK_LABEL[rank]}</div>
+          <div style={{ fontSize: small ? 16 : 24 }}>{s.glyph}</div>
+        </div>
+      );
+    }
+
+    const SLOTS = [
+      { id: 0, group: "hole", label: "Hole" },
+      { id: 1, group: "hole", label: "Hole" },
+      { id: 2, group: "flop", label: "Flop" },
+      { id: 3, group: "flop", label: "Flop" },
+      { id: 4, group: "flop", label: "Flop" },
+      { id: 5, group: "turn", label: "Turn" },
+      { id: 6, group: "river", label: "River" },
+    ];
+
+    function PokerOdds() {
+      const [cards, setCards] = useState(Array(7).fill(null));
+      const [active, setActive] = useState(0);
+      const [opps, setOpps] = useState(5);
+      const [running, setRunning] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const [result, setResult] = useState(null);
+
+      const used = useMemo(() => new Set(cards.filter((c) => c != null)), [cards]);
+
+      const setSlot = useCallback((k) => {
+        setCards((prev) => {
+          const next = [...prev];
+          next[active] = k;
+          return next;
+        });
+        setResult(null);
+        setActive((a) => {
+          for (let i = a + 1; i < 7; i++) if (cards[i] == null) return i;
+          return a;
+        });
+      }, [active, cards]);
+
+      const clearSlot = (i) => {
+        setCards((prev) => { const n = [...prev]; n[i] = null; return n; });
+        setActive(i);
+        setResult(null);
+      };
+
+      const hole = cards.slice(0, 2);
+      const board = cards.slice(2).filter((c) => c != null);
+      const canRun = hole.every((c) => c != null);
+      const boardCount = board.length;
+
+      const run = useCallback(() => {
+        if (!canRun) return;
+        setRunning(true); setProgress(0); setResult(null);
+        const TRIALS = 30000;
+        const known = cards.filter((c) => c != null);
+        const knownSet = new Set(known);
+        const deck = [];
+        for (let r = 2; r <= 14; r++) for (let s = 0; s < 4; s++) { const k = key(r, s); if (!knownSet.has(k)) deck.push(k); }
+        const holeCards = hole.map(fromKey);
+        const fixedBoard = board.map(fromKey);
+        const needBoard = 5 - fixedBoard.length;
+        let win = 0, tie = 0, loss = 0, equity = 0;
+        const catCount = new Array(9).fill(0);
+        let done = 0;
+        const BATCH = 3000;
+
+        const step = () => {
+          const end = Math.min(done + BATCH, TRIALS);
+          for (let t = done; t < end; t++) {
+            const need = needBoard + opps * 2;
+            for (let i = 0; i < need; i++) {
+              const j = i + Math.floor(Math.random() * (deck.length - i));
+              const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
+            }
+            const drawn = deck.slice(0, need).map(fromKey);
+            const fullBoard = fixedBoard.concat(drawn.slice(0, needBoard));
+            const me = evaluate7(holeCards.concat(fullBoard));
+            catCount[me[0]]++;
+            let bestOpp = null;
+            const oppScores = [];
+            for (let o = 0; o < opps; o++) {
+              const oc = drawn.slice(needBoard + o * 2, needBoard + o * 2 + 2);
+              const os = evaluate7(oc.concat(fullBoard));
+              oppScores.push(os);
+              if (!bestOpp || cmp(os, bestOpp) > 0) bestOpp = os;
+            }
+            const c = cmp(me, bestOpp);
+            if (c > 0) { win++; equity += 1; }
+            else if (c < 0) { loss++; }
+            else {
+              let tied = 0;
+              for (let o = 0; o < opps; o++) if (cmp(oppScores[o], me) === 0) tied++;
+              tie++; equity += 1 / (1 + tied);
+            }
+          }
+          done = end;
+          setProgress(Math.round((done / TRIALS) * 100));
+          if (done < TRIALS) { setTimeout(step, 0); }
+          else {
+            setResult({
+              trials: TRIALS,
+              win: (win / TRIALS) * 100,
+              tie: (tie / TRIALS) * 100,
+              loss: (loss / TRIALS) * 100,
+              equity: (equity / TRIALS) * 100,
+              cats: catCount.map((c) => (c / TRIALS) * 100),
+            });
+            setRunning(false);
+          }
+        };
+        setTimeout(step, 30);
+      }, [canRun, cards, hole, board, opps]);
+
+      const reset = () => { setCards(Array(7).fill(null)); setActive(0); setResult(null); };
+
+      return (
+        <div style={{
+          minHeight: "100vh", padding: "28px 16px 60px",
+          background: "radial-gradient(120% 90% at 50% 0%, #15573f 0%, #0c3b2a 45%, #07271c 100%)",
+          fontFamily: "'DM Mono', monospace", color: "#f3ead3",
+        }}>
+          <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;1,600&family=DM+Mono:wght@400;500&display=swap');`}</style>
+          <div style={{ maxWidth: 680, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 22 }}>
+              <h1 style={{ fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 40, margin: 0, color: "#e8c66b", letterSpacing: ".5px" }}>
+                Hold&rsquo;em Odds
+              </h1>
+              <p style={{ margin: "6px 0 0", fontSize: 12.5, opacity: 0.7, letterSpacing: ".6px" }}>
+                equity &amp; hand probability by Monte Carlo simulation
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 6 }}>
+              {SLOTS.map((sl) => {
+                const filled = cards[sl.id] != null;
+                const isActive = active === sl.id;
+                const gap = sl.id === 2 ? 18 : 0;
+                return (
+                  <div key={sl.id} style={{ marginLeft: gap, textAlign: "center" }}>
+                    <div style={{ fontSize: 9.5, opacity: 0.55, marginBottom: 4, textTransform: "uppercase", letterSpacing: "1px" }}>{sl.label}</div>
+                    <button
+                      onClick={() => filled ? clearSlot(sl.id) : setActive(sl.id)}
+                      style={{
+                        width: 50, height: 70, borderRadius: 8, cursor: "pointer",
+                        backgroundColor: filled ? "#faf6ec" : "rgba(255,255,255,0.05)",
+                        border: isActive ? "2px solid #e8c66b" : "1px dashed rgba(243,234,211,0.35)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        boxShadow: filled ? "0 3px 10px rgba(0,0,0,0.35)" : "none", transition: "all .15s",
+                      }}
+                      title={filled ? "Tap to clear" : "Tap to select"}
+                    >
+                      {filled ? <CardFace k={cards[sl.id]} /> : <span style={{ color: "rgba(243,234,211,0.4)", fontSize: 20 }}>+</span>}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "18px 0 14px" }}>
+              <span style={{ fontSize: 12.5, opacity: 0.8 }}>Opponents:</span>
+              {[5, 6, 7, 8].map((n) => (
+                <button key={n} onClick={() => { setOpps(n); setResult(null); }}
+                  style={{
+                    width: 40, height: 30, borderRadius: 6, cursor: "pointer",
+                    background: opps === n ? "#e8c66b" : "rgba(255,255,255,0.06)",
+                    color: opps === n ? "#0c3b2a" : "#f3ead3",
+                    border: "1px solid rgba(232,198,107,0.4)", fontFamily: "'DM Mono', monospace", fontSize: 13,
+                  }}>{n}</button>
+              ))}
+            </div>
+
+            <div style={{ background: "rgba(0,0,0,0.22)", borderRadius: 12, padding: "12px 10px", border: "1px solid rgba(232,198,107,0.18)" }}>
+              {SUITS.map((s) => (
+                <div key={s.id} style={{ display: "flex", gap: 4, justifyContent: "center", marginBottom: 5 }}>
+                  {RANKS.map((r) => {
+                    const k = key(r, s.id);
+                    const isUsed = used.has(k);
+                    return (
+                      <button key={k} disabled={isUsed} onClick={() => setSlot(k)}
+                        style={{
+                          width: 30, height: 34, borderRadius: 5, cursor: isUsed ? "default" : "pointer",
+                          background: isUsed ? "rgba(255,255,255,0.04)" : "#faf6ec",
+                          opacity: isUsed ? 0.25 : 1,
+                          border: "none", padding: 0,
+                          color: s.red ? "#c0392b" : "#1a1a1a",
+                          fontFamily: "'DM Mono', monospace", fontSize: 11.5, fontWeight: 500,
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.05,
+                        }}>
+                        <span>{RANK_LABEL[r]}</span><span style={{ fontSize: 12 }}>{s.glyph}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={run} disabled={!canRun || running}
+                style={{
+                  flex: 1, padding: "13px", borderRadius: 9, border: "none",
+                  cursor: canRun && !running ? "pointer" : "not-allowed",
+                  background: canRun && !running ? "#e8c66b" : "rgba(232,198,107,0.3)",
+                  color: "#0c3b2a", fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 18, fontWeight: 600,
+                }}>
+                {running ? `Simulating ${progress}%` : "Calculate Odds"}
+              </button>
+              <button onClick={reset}
+                style={{ padding: "13px 18px", borderRadius: 9, border: "1px solid rgba(243,234,211,0.3)", background: "transparent", color: "#f3ead3", cursor: "pointer", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+                Reset
+              </button>
+            </div>
+            {!canRun && <p style={{ fontSize: 11.5, opacity: 0.6, textAlign: "center", marginTop: 10 }}>Select your two hole cards to begin. Board cards are optional.</p>}
+
+            {result && (
+              <div style={{ marginTop: 24 }}>
+                <div style={{ fontSize: 11, opacity: 0.55, textAlign: "center", marginBottom: 12, letterSpacing: ".5px" }}>
+                  {boardCount === 0 ? "Pre-flop" : boardCount === 3 ? "On the flop" : boardCount === 4 ? "On the turn" : "On the river"} &middot; vs {opps} random {opps === 1 ? "hand" : "hands"} &middot; {result.trials.toLocaleString()} trials
+                </div>
+
+                <div style={{ display: "flex", height: 46, borderRadius: 9, overflow: "hidden", border: "1px solid rgba(232,198,107,0.3)" }}>
+                  <Seg label="Win" pct={result.win} color="#3fae7a" />
+                  <Seg label="Tie" pct={result.tie} color="#c9a24b" />
+                  <Seg label="Lose" pct={result.loss} color="#a8412f" />
+                </div>
+                <div style={{ textAlign: "center", marginTop: 12, fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 26, color: "#e8c66b" }}>
+                  {result.equity.toFixed(1)}% equity
+                </div>
+
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8, letterSpacing: ".5px", textTransform: "uppercase" }}>Your final hand</div>
+                  {result.cats.map((p, i) => p > 0.05 ? (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
+                      <div style={{ width: 120, fontSize: 11.5, opacity: 0.85, textAlign: "right" }}>{CAT_NAMES[i]}</div>
+                      <div style={{ flex: 1, background: "rgba(255,255,255,0.06)", borderRadius: 4, height: 14, overflow: "hidden" }}>
+                        <div style={{ width: `${Math.min(p, 100)}%`, height: "100%", background: "#e8c66b", opacity: 0.85 }} />
+                      </div>
+                      <div style={{ width: 48, fontSize: 11.5, textAlign: "right" }}>{p.toFixed(1)}%</div>
+                    </div>
+                  ) : null).reverse()}
+                </div>
+                <p style={{ fontSize: 10.5, opacity: 0.45, marginTop: 14, textAlign: "center" }}>
+                  Estimates from random sampling; expect ~±0.5% variance run to run.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function Seg({ label, pct, color }) {
+      if (pct < 0.5) return null;
+      return (
+        <div style={{ width: `${pct}%`, background: color, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", minWidth: pct > 8 ? "auto" : 0 }}>
+          {pct > 8 && (<><span style={{ fontSize: 10, opacity: 0.85, color: "#07271c" }}>{label}</span><span style={{ fontSize: 13, fontWeight: 500, color: "#07271c" }}>{pct.toFixed(0)}%</span></>)}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<PokerOdds />);
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Bootstrap Android project (first run only)
+        run: |
+          if [ ! -d android ]; then
+            echo "No android/ directory found - running 'npx cap add android'..."
+            npx cap add android
+          else
+            echo "android/ already exists - skipping bootstrap."
+          fi
+
+      - name: Sync web assets into Android project
+        run: npx cap sync android
+
+      - name: Ensure release keystore exists
+        run: |
+          if [ ! -f keystore/release.keystore ]; then
+            echo "Generating new release keystore..."
+            mkdir -p keystore
+            keytool -genkeypair -v \
+              -keystore keystore/release.keystore \
+              -storepass androidpw -keypass androidpw \
+              -alias holdem -keyalg RSA -keysize 2048 -validity 36500 \
+              -dname "CN=Holdem Odds, OU=Personal, O=Personal, L=NA, S=NA, C=US"
+          else
+            echo "Keystore already present."
+          fi
+
+      - name: Commit bootstrap artifacts back to repo (first run only)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "ci: bootstrap android project + release keystore"
+          file_pattern: "android keystore"
+
+      - name: Build unsigned release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Sign APK with release key
+        run: |
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)
+          echo "Using build-tools at: $BUILD_TOOLS"
+          UNSIGNED=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          SIGNED=android/app/build/outputs/apk/release/holdem-odds.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks keystore/release.keystore \
+            --ks-pass pass:androidpw \
+            --key-pass pass:androidpw \
+            --out "$SIGNED" \
+            "$UNSIGNED"
+          "$BUILD_TOOLS/apksigner" verify "$SIGNED"
+          ls -l "$SIGNED"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: holdem-odds-apk
+          path: android/app/build/outputs/apk/release/holdem-odds.apk
+          if-no-files-found: error
+          retention-days: 30

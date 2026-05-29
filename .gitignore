@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+*.log
+
+# Capacitor / Android build outputs (the APK is the artifact, not a commit)
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/captures/
+android/.idea/
+android/*.iml
+android/app/*.iml
+
+# Keep these committed for stable signing + reproducible builds:
+# !android/app/debug.keystore
+# !keystore/
